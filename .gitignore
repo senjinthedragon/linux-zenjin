@@ -1,0 +1,9 @@
+linux-zen/
+*.pkg.tar.zst
+*.pkg.tar.xz
+lsmod.txt
+vmlinux-baseline
+perf.data
+perf_propeller.data
+compile_workload.log
+tmp/

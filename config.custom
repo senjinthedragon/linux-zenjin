@@ -1,0 +1,236 @@
+# =============================================================
+# Velociraptor Custom Kernel Config Fragment
+# i7-8700K (Coffee Lake) / RTX 2080 / ASUS Prime Z390-A
+# =============================================================
+# Applied on top of linux-zen via merge_config.sh.
+# Only lists differences from zen defaults.
+# Keep this file: when zen updates, re-run setup.sh to rebuild.
+
+
+# --- AutoFDO + Propeller: Profile-guided optimization ---
+# Both are compatible with ThinLTO and each other.
+# AUTOFDO_CLANG: hot-path optimization based on perf profile.
+# PROPELLER_CLANG: code layout optimization (function/basic block ordering).
+# For the optimized build: pass CLANG_AUTOFDO_PROFILE via patch_pkgbuild.py.
+# For Propeller: need a perf.data collected on a binary built with both flags
+# enabled — do this on the next profile refresh, then also pass
+# CLANG_PROPELLER_PROFILE_PREFIX to the build.
+CONFIG_AUTOFDO_CLANG=y
+CONFIG_PROPELLER_CLANG=y
+
+
+# --- Compiler: Clang ThinLTO ---
+# GCC build replaced with Clang + link-time optimisation.
+# ThinLTO chosen over Full for reasonable build times (~2-3h vs 6h+).
+# DKMS modules (nvidia, looking-glass, v4l2loopback, vboxhost) are
+# compiled separately and are NOT affected by kernel LTO.
+CONFIG_LTO_NONE=n
+CONFIG_LTO_CLANG_THIN=y
+
+# Allow DKMS modules with BTF that doesn't match the kernel's.
+# Required because DKMS compiles with GCC while the kernel uses Clang/LTO,
+# producing incompatible BTF debug info. Without this, i2c_nct6793,
+# v4l2loopback, and others fail to insert at early boot.
+CONFIG_MODULE_ALLOW_BTF_MISMATCH=y
+
+
+# --- CPU: trim max CPU count ---
+# Zen default is 8192. i7-8700K has 12 threads; 16 leaves room for VMs.
+CONFIG_NR_CPUS=16
+
+
+# --- GPU: remove unused driver families ---
+# Proprietary nvidia is a DKMS module and never built into the kernel.
+# Nouveau, AMDGPU, and Radeon have no hardware to attach to.
+CONFIG_DRM_NOUVEAU=n
+CONFIG_DRM_AMDGPU=n
+CONFIG_DRM_RADEON=n
+# Stock linux-zen does NOT build simpledrm. Without this line, localmodconfig
+# preserves CONFIG_DRM_SIMPLEDRM=y, which creates a DRM card0 for the EFI
+# framebuffer at boot. NVIDIA gets card1. KWin picks card0 as primary, can't
+# do OpenGL on it, falls back to Mesa llvmpipe — 800% CPU instead of the GPU.
+CONFIG_DRM_SIMPLEDRM=n
+
+
+# --- USB: remove legacy host controllers ---
+# Z390-A uses xHCI exclusively. USB 2.0 devices (keyboard, BT dongle,
+# etc.) are served by xHCI's built-in transaction translator.
+# EHCI/OHCI/UHCI are dead weight on any post-2012 Intel platform.
+CONFIG_USB_EHCI_HCD=n
+CONFIG_USB_OHCI_HCD=n
+CONFIG_USB_UHCI_HCD=n
+
+
+# --- WiFi: remove entire wireless stack ---
+# Z390-A has no wireless hardware (ethernet-only board).
+# Bluetooth uses its own btusb/btrtl stack and does NOT depend on
+# cfg80211 or mac80211, so this is safe.
+CONFIG_WIRELESS=n
+CONFIG_CFG80211=n
+CONFIG_MAC80211=n
+
+
+# --- Virtualisation: remove AMD paths ---
+# i7-8700K uses VMX (Intel VT-x), not AMD SVM.
+# Intel IOMMU is kept — it is required for the iGPU VFIO passthrough.
+CONFIG_KVM_AMD=n
+CONFIG_KVM_AMD_SEV=n
+CONFIG_AMD_IOMMU=n
+CONFIG_AMD_MEM_ENCRYPT=n
+
+
+# --- Unused hardware subsystems ---
+CONFIG_FIREWIRE=n
+# No FireWire ports on Z390-A
+
+CONFIG_PARPORT=n
+# No parallel port
+
+CONFIG_BLK_DEV_FD=n
+# No floppy drive
+
+CONFIG_HAMRADIO=n
+# No ham radio
+
+CONFIG_ISDN=n
+# No ISDN hardware
+
+CONFIG_INFINIBAND=n
+# No InfiniBand; mlx4.conf in modprobe.d is just a commented template
+
+
+# --- Filesystems ---
+# datastore (bitlk-datastore) has 0xFFFFFEFF clusters (~16TB), right at the 32-bit
+# ceiling. Without this, ntfs3 log replay bails on runs near the cluster limit and
+# re-marks the volume dirty, making it unmountable with ntfs3 even with force=y.
+# ntfs-3g is used as a workaround in fstab until this is compiled in.
+CONFIG_NTFS3_64BIT_CLUSTER=y
+
+# Optical disc / ISO filesystems — stripped by localmodconfig (no disc in drive at snapshot time)
+# UDF: Blu-ray/DVD ISOs (e.g. Kraftwerk concert ISO)
+CONFIG_UDF_FS=m
+# ISO 9660: standard CD/DVD filesystem, required for most ISOs
+CONFIG_ISO9660_FS=m
+CONFIG_JOLIET=y
+CONFIG_ZISOFS=y
+
+# SquashFS — AppImages, Flatpak, live USBs, snap
+CONFIG_SQUASHFS=m
+CONFIG_SQUASHFS_XZ=y
+CONFIG_SQUASHFS_ZSTD=y
+
+# EROFS — Android images, some containers
+CONFIG_EROFS_FS=m
+
+
+# --- CPU frequency scaling ---
+# localmodconfig strips acpi_cpufreq because built-in drivers don't appear
+# in lsmod. Without it and with intel_pstate failing (HWP disabled in BIOS),
+# the CPU is stuck at base clock (3700 MHz) with no turbo.
+# Must be built-in (=y), not module (=m) — needs to run at boot time
+# before ACPI processor P-state structures are torn down.
+CONFIG_X86_ACPI_CPUFREQ=y
+
+
+# --- Debug info / BTF ---
+# Full DWARF is required for CONFIG_DEBUG_INFO_BTF — DEBUG_INFO_REDUCED is
+# mutually exclusive with BTF. BTF is needed for CONFIG_SCHED_CLASS_EXT
+# (sched-ext / scx_lavd gaming scheduler). Build time cost ~20-40% more;
+# installed bzImage is unaffected in size (DWARF is stripped from it).
+# DEBUG_INFO_BTF_MODULES=n: skip per-module BTF — DKMS modules are GCC-built
+# and MODULE_ALLOW_BTF_MISMATCH=y already handles the mismatch.
+CONFIG_DEBUG_INFO_BTF=y
+CONFIG_DEBUG_INFO_BTF_MODULES=n
+CONFIG_SCHED_CLASS_EXT=y
+
+
+# --- NUMA ---
+# i7-8700K is single-socket with no NUMA topology. Disabling removes
+# overhead from every memory allocation path.
+CONFIG_NUMA=n
+
+
+# --- Thunderbolt / Cavium ARM server NICs (no hardware) ---
+# Z390-A has no Thunderbolt ports. Cavium ThunderX is an ARM server NIC.
+CONFIG_INTEL_WMI_THUNDERBOLT=n
+CONFIG_CAVIUM_PTP=n
+CONFIG_THUNDER_NIC_PF=n
+CONFIG_THUNDER_NIC_VF=n
+CONFIG_THUNDER_NIC_BGX=n
+CONFIG_THUNDER_NIC_RGX=n
+
+
+# --- Loop device ---
+# Required for AppImages (eden emulator etc.) and mounting disk/ISO images.
+# localmodconfig strips it if no loop devices were active at snapshot time.
+CONFIG_BLK_DEV_LOOP=m
+
+
+# --- VMs: TUN/TAP and 9P virtio filesystem ---
+# TUN: required for VPNs (WireGuard userspace, OpenVPN) and VM networking
+CONFIG_TUN=m
+# 9P: QEMU/KVM virtio filesystem sharing (host↔guest directory sharing)
+CONFIG_NET_9P=m
+CONFIG_NET_9P_VIRTIO=m
+CONFIG_9P_FS=m
+
+
+# --- Hardware exceptions for localmodconfig ---
+# setup.sh captures lsmod.txt and localmodconfig strips everything not
+# currently loaded. These devices are used regularly but may not be
+# plugged in at snapshot time — restore them explicitly here.
+#
+# Blue Yeti mic + Roland PCR-800 MIDI keyboard (USB audio/MIDI)
+CONFIG_SND_USB_AUDIO=m
+CONFIG_SND_RAWMIDI=m
+CONFIG_SND_SEQ_MIDI=m
+CONFIG_SND_SEQ_MIDI_EMUL=m
+CONFIG_SND_SEQ_MIDI_EVENT=m
+# DualSense Edge controller (USB or Bluetooth)
+CONFIG_HID_PLAYSTATION=m
+# Legacy joystick interface (/dev/js*) — needed by some older games
+CONFIG_JOYDEV=m
+# Android devices via USB (ADB CDC-ACM mode, Galaxy S23/Tab S7+)
+CONFIG_USB_ACM=m
+# Windows network share access (CIFS/SMB client, for Windows PCs on LAN)
+CONFIG_CIFS=m
+
+
+# --- Network: congestion control + fair queuing ---
+# BBR for better throughput under load (qbittorrent etc.); FQ qdisc pairs with it.
+# Both were absent from the current kernel build — added 2026-06-15.
+CONFIG_TCP_CONG_BBR=y
+CONFIG_NET_SCH_FQ=m
+CONFIG_DEFAULT_TCP_CONG="bbr"
+
+
+# --- IMPORTANT: things we must NOT disable ---
+# These are here as reminders — they are already enabled in zen defaults.
+#
+# CONFIG_KVM=m                  QEMU Windows VM
+# CONFIG_KVM_INTEL=m            Intel VT-x
+# CONFIG_VFIO=m                 iGPU passthrough (8086:3e92 → vfio-pci)
+# CONFIG_VFIO_PCI=m             ditto
+# CONFIG_VFIO_IOMMU_TYPE1=m     ditto
+# CONFIG_INTEL_IOMMU=y          ditto
+# CONFIG_DRM_I915=m             iGPU device must be present for vfio-pci
+#                                to claim it by ID at boot
+# CONFIG_SND_ALOOP=m            audio loopback used for VM audio
+# CONFIG_BT=m                   ASUS USB-BT500 (RTL8761BU)
+# CONFIG_BT_HCIBTUSB=m          ditto
+# CONFIG_BT_HCIBTUSB_RTL=y      Realtek firmware loading
+# CONFIG_BT_RFCOMM=m            phone as BT storage/audio
+# CONFIG_BT_BNEP=m              ditto
+# CONFIG_V4L2_LOOPBACK           DroidCam virtual camera (DKMS)
+# CONFIG_BTRFS_FS=y             root filesystem
+# CONFIG_NTFS3_FS=m             BitLocker drives (4x)
+# CONFIG_DM_CRYPT=m             BitLocker decryption
+# CONFIG_EXFAT_FS=m             Ventoy USB stick
+# CONFIG_TUN=m                  VPN + VM networking (WireGuard, OpenVPN, QEMU)
+# CONFIG_NET_9P=m               QEMU/KVM 9P virtio filesystem sharing
+# CONFIG_NET_9P_VIRTIO=m        ditto
+# CONFIG_9P_FS=m                ditto
+# CONFIG_E1000E=m               Intel I219-V — the only NIC
+# CONFIG_IA32_EMULATION=y       Steam + 32-bit game binaries
+# CONFIG_ASUS_WMI=m             Aura RGB + fan/sensor control
+# CONFIG_I2C_I801=m             SMBus (disable_features handled in modprobe.d)
