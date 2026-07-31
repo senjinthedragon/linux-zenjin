@@ -2,13 +2,16 @@
 """
 Patches the linux-zen PKGBUILD to:
   1. Rename pkgbase to linux-zenjin
-  2. Add config.custom, lsmod.txt, and ntfs3 patches to source_x86_64
+  2. Add config.custom and lsmod.txt to source_x86_64
   3. Add SKIP checksums for each local file
-  4. In prepare(): apply ntfs3 patches, run localmodconfig, merge config.custom
+  4. In prepare(): run localmodconfig, merge config.custom
   5. Switch build() to Clang + ThinLTO + -march=native (no -O flag — zen uses -O3)
 
 Run from inside the linux-zen clone directory.
 Safe to re-run: each section is guarded by a marker string.
+
+Note: the ntfs3 patches (mft-bitmap-run-extents, 64bit-cluster-maxbytes-sparse)
+were removed 2026-07-31 — both fixes landed upstream by kernel 7.1.5.
 """
 
 import sys
@@ -28,8 +31,6 @@ def find_line(pattern, start=0):
             return i
     return -1
 
-PATCH_FILE  = "ntfs3-mft-bitmap-run-extents.patch"
-PATCH_FILE2 = "ntfs3-64bit-cluster-maxbytes-sparse.patch"
 LSMOD_FILE  = "lsmod.txt"
 
 # ── 0. Rename pkgbase ────────────────────────────────────────────────────────
@@ -48,8 +49,6 @@ source_block = "".join(lines)
 
 for fname, label in [
     ("config.custom", "config.custom"),
-    (PATCH_FILE,      PATCH_FILE),
-    (PATCH_FILE2,     PATCH_FILE2),
     (LSMOD_FILE,      LSMOD_FILE),
 ]:
     if fname not in source_block:
@@ -64,7 +63,7 @@ for fname, label in [
         print(f"· source_x86_64 already contains {label}")
 
 # ── 2. Add SKIP entries to b2sums_x86_64 ────────────────────────────────────
-custom_files = ["config.custom", PATCH_FILE, PATCH_FILE2, LSMOD_FILE]
+custom_files = ["config.custom", LSMOD_FILE]
 all_lines = "".join(lines)
 b2_start    = find_line("b2sums_x86_64")
 b2_line_idx = find_line("b2sums_x86_64=(", b2_start) if b2_start >= 0 else -1
@@ -79,41 +78,6 @@ if b2_line_idx >= 0:
         changed = True
     else:
         print("· b2sums_x86_64 already has correct SKIP count")
-
-# ── 3. Apply ntfs3 patches in prepare() (before make olddefconfig) ───────────
-# Check each patch independently so an older single-patch block gets upgraded.
-for pfile, plabel in [(PATCH_FILE, "mft-bitmap"), (PATCH_FILE2, "maxbytes-sparse")]:
-    apply_cmd = f"patch -Np1 -i \"${{srcdir}}/{pfile}\""
-    if apply_cmd not in "".join(lines):
-        # Find the best insertion point: after last known ntfs3 apply, or before olddefconfig
-        j = find_line(f"patch -Np1 -i \"${{srcdir}}/{PATCH_FILE}\"")
-        if j != -1 and pfile == PATCH_FILE2:
-            # Insert right after the first patch's apply line
-            insert = [
-                f"  echo 'Applying {pfile}...'\n",
-                f"  {apply_cmd}\n",
-            ]
-            lines[j+1:j+1] = insert
-        else:
-            # Fresh PKGBUILD: insert whole block before make olddefconfig
-            i = find_line("  make olddefconfig")
-            if i == -1:
-                sys.exit("ERROR: Could not find 'make olddefconfig' in prepare().")
-            insert = [
-                "\n",
-                "  # === Velociraptor ntfs3 patches ===\n",
-                f"  echo 'Applying {PATCH_FILE}...'\n",
-                f"  patch -Np1 -i \"${{srcdir}}/{PATCH_FILE}\"\n",
-                f"  echo 'Applying {PATCH_FILE2}...'\n",
-                f"  patch -Np1 -i \"${{srcdir}}/{PATCH_FILE2}\"\n",
-                "  # ===================================\n",
-            ]
-            lines[i:i] = insert
-        print(f"✓ Added {plabel} patch application to prepare()")
-        changed = True
-        break  # re-join will catch next pass; avoid double-insert on fresh PKGBUILD
-    else:
-        print(f"· {plabel} patch already in prepare()")
 
 # ── 4. Merge config.custom in prepare() (after make olddefconfig) ────────────
 FRAGMENT_MARKER = "Velociraptor custom config"

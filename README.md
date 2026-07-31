@@ -11,7 +11,6 @@ A custom `linux-zen` kernel build for **Velociraptor** — a specific desktop ma
 - **Clang + ThinLTO** — full LLVM toolchain with link-time optimization
 - **Hardware-stripped** — unused drivers, subsystems, and CPU counts removed via `localmodconfig` + custom config fragment; build time and binary size cut significantly
 - **sched-ext (scx_lavd)** — BPF scheduler framework enabled; `scx_lavd` runs automatically under GameMode for gaming sessions
-- **ntfs3 patches** — two custom kernel patches for large NTFS volumes (16TB BitLocker datastore with fragmented MFT bitmaps and 64-bit cluster counts)
 - **BBR + FQ** — TCP congestion control tuned for throughput
 
 ## Hardware this is built for
@@ -31,8 +30,6 @@ A custom `linux-zen` kernel build for **Velociraptor** — a specific desktop ma
 | `setup.sh` | Run once per kernel version: pulls the upstream linux-zen PKGBUILD, snapshots loaded modules, copies all files, patches the PKGBUILD |
 | `patch_pkgbuild.py` | Automates all PKGBUILD modifications (idempotent) |
 | `config.custom` | Kernel config fragment applied on top of linux-zen defaults |
-| `ntfs3-mft-bitmap-run-extents.patch` | Fixes MFT bitmap run list loading for heavily-fragmented large NTFS volumes |
-| `ntfs3-64bit-cluster-maxbytes-sparse.patch` | Fixes `maxbytes_sparse` sign error on 64-bit cluster volumes |
 
 ## Usage
 

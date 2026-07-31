@@ -39,9 +39,6 @@ echo "==> Copying config.custom and lsmod.txt..."
 cp "$SCRIPT_DIR/config.custom" "$ZEN_DIR/config.custom"
 cp "$SCRIPT_DIR/lsmod.txt"     "$ZEN_DIR/lsmod.txt"
 
-echo "==> Copying kernel patches..."
-cp "$SCRIPT_DIR"/ntfs3-*.patch "$ZEN_DIR/" 2>/dev/null && echo "    Copied ntfs3 patches" || echo "    (no ntfs3 patches found)"
-
 # ── Apply PKGBUILD patches ────────────────────────────────────────────────────
 echo "==> Patching PKGBUILD..."
 cd "$ZEN_DIR"
