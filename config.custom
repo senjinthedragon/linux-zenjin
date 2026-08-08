@@ -45,11 +45,17 @@ CONFIG_NR_CPUS=16
 CONFIG_DRM_NOUVEAU=n
 CONFIG_DRM_AMDGPU=n
 CONFIG_DRM_RADEON=n
-# Stock linux-zen does NOT build simpledrm. Without this line, localmodconfig
-# preserves CONFIG_DRM_SIMPLEDRM=y, which creates a DRM card0 for the EFI
-# framebuffer at boot. NVIDIA gets card1. KWin picks card0 as primary, can't
-# do OpenGL on it, falls back to Mesa llvmpipe — 800% CPU instead of the GPU.
-CONFIG_DRM_SIMPLEDRM=n
+# Re-enabled 2026-08-08: was =n after a 2026-07-20 incident (EFI framebuffer
+# landing on card0, NVIDIA on card1, KWin picking card0 -> Mesa llvmpipe
+# software rendering at 800% CPU), on the assumption stock linux-zen doesn't
+# build simpledrm either. That assumption was wrong — stock zen currently
+# ships CONFIG_DRM_SIMPLEDRM=y and boots cleanly on this same hardware/driver.
+# Missing simpledrm is also the confirmed root cause of a separate bug: no
+# fallback console for NVIDIA's weak generic fbdev, causing broken/frozen
+# VT-switch and shutdown console transitions (see memory:
+# project_nvidia_vt_switch_freeze.md). Re-enabling to fix that. If the old
+# llvmpipe/high-CPU symptom reappears, revert this line to =n first.
+CONFIG_DRM_SIMPLEDRM=y
 
 
 # --- USB: remove legacy host controllers ---

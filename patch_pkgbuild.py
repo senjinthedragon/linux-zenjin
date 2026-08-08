@@ -237,6 +237,24 @@ if PROPELLER_MARKER not in "".join(lines):
 else:
     print("· Propeller profile export already in build()")
 
+# ── 6e. Run profile coverage check right after make all (before stripping) ──
+COVERAGE_MARKER = "Velociraptor: profile coverage check"
+if COVERAGE_MARKER not in "".join(lines):
+    i = find_line("  make all")
+    if i == -1:
+        sys.exit("ERROR: Could not find 'make all' in build().")
+    insert = [
+        "\n",
+        "  # === Velociraptor: profile coverage check ===\n",
+        "  bash /home/senjin/kernel-build/check_profile_coverage.sh \"$PWD/vmlinux\" || true\n",
+        "  # ==============================================\n",
+    ]
+    lines[i+1:i+1] = insert
+    print("✓ Added profile coverage check after make all")
+    changed = True
+else:
+    print("· Profile coverage check already in build()")
+
 # ── Write result ──────────────────────────────────────────────────────────────
 if changed:
     PKGBUILD.write_text("".join(lines))
