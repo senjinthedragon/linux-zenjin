@@ -57,6 +57,74 @@ CONFIG_DRM_RADEON=n
 # llvmpipe/high-CPU symptom reappears, revert this line to =n first.
 CONFIG_DRM_SIMPLEDRM=y
 
+# Fix for the KWin-picks-wrong-GPU regression the above simpledrm re-enable caused
+# (2026-08-08, ~30-round bisection across an 8-hour session — see memory:
+# project_nvidia_vt_switch_freeze.md for the full story). Symptom: KWin picked simpledrm's
+# card0 instead of NVIDIA's card1 at Plasma startup, glitchy/flashing desktop. Missing
+# from every dmesg capture: "vgaarb: deactivate vga console" / "fbcon: ... is primary
+# device" — the kernel's handoff from the firmware framebuffer to the real GPU driver
+# never fired. Two independent things needed fixing, both examples of the same root
+# mechanism (localmodconfig stripping something silently, with no warning):
+#
+# 1. VGA_SWITCHEROO (GPU-handoff coordination) `depends on (FRAMEBUFFER_CONSOLE=n ||
+#    FB=y)` — CONFIG_FB (legacy fbdev core) was being stripped since nothing visibly
+#    used it at lsmod-snapshot time, silently failing VGA_SWITCHEROO's dependency.
+# 2. CONFIG_I2C (base I2C bus subsystem, used for DDC/EDID display communication) was
+#    ALSO being stripped for the same reason — this is what the DRM_VBOXVIDEO line below
+#    actually forces on (see its comment).
+#
+# CONFIG_APERTURE_HELPERS is technically redundant to list here — DRM_SIMPLEDRM already
+# `select`s it unconditionally, and it's a prompt-less/hidden Kconfig symbol that can't
+# be forced by direct assignment anyway (same class of thing as DRM_VRAM_HELPER below).
+# Left in as a documented reminder of the mechanism, not because this line does anything.
+CONFIG_FB=y
+CONFIG_VGA_SWITCHEROO=y
+CONFIG_APERTURE_HELPERS=y
+
+# Confirmed via the same bisection: localmodconfig was also stripping DRM_I915 despite
+# the reminder below saying not to — the iGPU is bound to vfio-pci (not i915) for the
+# Windows11 VM passthrough at lsmod-snapshot time, so localmodconfig never saw it as
+# "in use". Promoting from passive comment to active directive.
+CONFIG_DRM_I915=m
+
+# The other genuinely necessary piece, alongside FB/VGA_SWITCHEROO above: CONFIG_I2C
+# (base I2C bus, used for DDC/EDID communication with the actual monitor — part of why
+# the KWin symptom included "Could not find edid for connector" in kwin_wayland's log).
+# localmodconfig was stripping it entirely for the same "nothing visibly uses it" reason.
+CONFIG_I2C=y
+
+# DRM_VBOXVIDEO=m is NOT here for VirtualBox guest support (this machine is bare metal,
+# this module will never bind to anything) — it's a vehicle for CONFIG_FB_CORE, a distinct
+# and more modern hidden symbol from the legacy CONFIG_FB above (drivers/video/fbdev/core/
+# Kconfig — bare `tristate`, no prompt, `select VIDEO`). FB_CORE is what DRM's generic
+# fbdev-emulation client actually needs to complete the vgaarb/fbcon handoff; confirmed
+# absent in every broken build's .config, present only in working ones.
+#
+# The weird part, root-caused not just worked-around: CONFIG_DRM_KMS_HELPER (already =y
+# in every build all along) ALSO does `select FB_CORE if DRM_FBDEV_EMULATION` (also already
+# =y all along) — by the Kconfig graph that alone should have forced FB_CORE=y regardless
+# of anything else. It never did, in any broken build. This is the same failure mode as
+# APERTURE_HELPERS at the very start of this saga: conditional `select X if Y` relationships
+# don't reliably re-resolve in THIS PKGBUILD's specific build order (prepare() runs
+# `make localmodconfig` BEFORE `merge_config.sh`, then one final `make olddefconfig`) even
+# when Y is already true. The only reliable fix pattern found: force a REAL, non-hidden
+# option that selects the target unconditionally. DRM_VBOXVIDEO (`select FB_CORE if
+# DRM_FBDEV_EMULATION`, same conditional form) happens to hold reliably where the other two
+# paths didn't — not fully explained beyond "empirically verified across many rebuild/
+# reboot cycles," likely down to Kconfig's internal processing order in a single pass.
+#
+# Confirmed via `grep -rln "select FB_CORE" drivers/gpu/drm/ drivers/video/` — three hits
+# (drm/Kconfig's DRM_KMS_HELPER, drm/clients/Kconfig's DRM_CLIENT_LIB, video/fbdev/Kconfig).
+# DRM_VBOXVIDEO reaches FB_CORE via DRM_TTM_HELPER -> FB_CORE, a fourth path, is the one that
+# actually works. If a kernel version bump breaks this, re-run that grep and re-test whichever
+# real (non-hidden) option reaches FB_CORE most directly.
+#
+# Worth a future session (not this one): try reordering prepare() so config.custom merges
+# BEFORE localmodconfig, or add an extra `make olddefconfig` pass after the merge — might
+# make direct selects hold without needing vehicle options like this at all. See memory:
+# project_nvidia_vt_switch_freeze.md for the full investigation.
+CONFIG_DRM_VBOXVIDEO=m
+
 
 # --- USB: remove legacy host controllers ---
 # Z390-A uses xHCI exclusively. USB 2.0 devices (keyboard, BT dongle,
@@ -200,6 +268,15 @@ CONFIG_JOYDEV=m
 CONFIG_USB_ACM=m
 # Windows network share access (CIFS/SMB client, for Windows PCs on LAN)
 CONFIG_CIFS=m
+# PCH onboard audio (ALC1220 codec, S/PDIF passthrough — see project_mpv_audio.md) and NVIDIA
+# HDMI/DP audio codec support. Both went missing 2026-08-09: localmodconfig stripped them since
+# audio hadn't successfully probed on this kernel in a while (a vicious cycle caused by the VFIO
+# early-bind dracut config starving i915's audio-component registration — see memory:
+# project_audio_hda_probe_regression.md — fixed separately, but these codec drivers still need
+# restoring explicitly since localmodconfig had already stripped them by the time that was fixed).
+CONFIG_SND_HDA_CODEC_REALTEK=m
+CONFIG_SND_HDA_GENERIC=m
+CONFIG_SND_HDA_CODEC_HDMI=m
 
 
 # --- Network: congestion control + fair queuing ---
@@ -219,8 +296,9 @@ CONFIG_DEFAULT_TCP_CONG="bbr"
 # CONFIG_VFIO_PCI=m             ditto
 # CONFIG_VFIO_IOMMU_TYPE1=m     ditto
 # CONFIG_INTEL_IOMMU=y          ditto
-# CONFIG_DRM_I915=m             iGPU device must be present for vfio-pci
-#                                to claim it by ID at boot
+# CONFIG_DRM_I915=m             now an ACTIVE line above (2026-08-08) — was silently
+#                                stripped by localmodconfig despite this reminder;
+#                                see the GPU-handoff fix comment above CONFIG_FB
 # CONFIG_SND_ALOOP=m            audio loopback used for VM audio
 # CONFIG_BT=m                   ASUS USB-BT500 (RTL8761BU)
 # CONFIG_BT_HCIBTUSB=m          ditto
